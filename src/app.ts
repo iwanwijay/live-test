@@ -7,7 +7,8 @@ interface WSMessage {
   message?: string;
 }
 
-const wsUrl: string = `ws://${window.location.host}/ws`;
+const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+const wsUrl = `${protocol}//${window.location.host}/ws`;
 
 // --- PUBLISHER LOGIC ---
 const startPublishBtn = document.getElementById(

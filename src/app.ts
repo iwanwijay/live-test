@@ -35,6 +35,7 @@ if (startPublishBtn && localVideo && streamIdInput) {
         audio: true,
       });
       localVideo.srcObject = stream;
+      localVideo.muted = true;
 
       // 2. Buka WebSocket & PeerConnection
       const ws: WebSocket = new WebSocket(wsUrl);

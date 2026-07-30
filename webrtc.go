@@ -14,19 +14,21 @@ import (
 
 type WebRTCManager struct {
 	mu           sync.RWMutex
-	streams      map[string]*webrtc.TrackLocalStaticRTP
-	streamerPC   map[string]*webrtc.PeerConnection // Simpan PC milik streamer untuk kirim PLI
-	streamerSSRC map[string]webrtc.SSRC            // Simpan SSRC track streamer
+	streams      map[string][]*webrtc.TrackLocalStaticRTP // Mendukung multiple tracks (Video + Audio)
+	streamerPC   map[string]*webrtc.PeerConnection        // PC Streamer untuk request PLI
+	streamerSSRC map[string]webrtc.SSRC                   // SSRC Video Streamer
 	webrtcAPI    *webrtc.API
 }
 
 func NewWebRTCManager() *WebRTCManager {
 	mediaEngine := &webrtc.MediaEngine{}
+
+	// Register default codecs (VP8, VP9, H264, Opus, PCMU, PCMA)
 	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
 		log.Fatalf("Gagal mendaftarkan default codecs: %v", err)
 	}
 
-	// Tambahkan Interceptor Registry untuk menangani NACK, PLI, & H264 dari Safari/Chrome
+	// Register Interceptor untuk menangani NACK, PLI, & Bandwidth Estimator
 	interceptorRegistry := &interceptor.Registry{}
 	if err := webrtc.RegisterDefaultInterceptors(mediaEngine, interceptorRegistry); err != nil {
 		log.Fatalf("Gagal mendaftarkan default interceptors: %v", err)
@@ -38,14 +40,13 @@ func NewWebRTCManager() *WebRTCManager {
 	)
 
 	return &WebRTCManager{
-		streams:      make(map[string]*webrtc.TrackLocalStaticRTP),
+		streams:      make(map[string][]*webrtc.TrackLocalStaticRTP),
 		streamerPC:   make(map[string]*webrtc.PeerConnection),
 		streamerSSRC: make(map[string]webrtc.SSRC),
 		webrtcAPI:    api,
 	}
 }
 
-// Config RTC dengan STUN server publik
 func getRTCConfig() webrtc.Configuration {
 	return webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
@@ -56,7 +57,7 @@ func getRTCConfig() webrtc.Configuration {
 	}
 }
 
-// HandleIngest menangani koneksi dari Streamer
+// HandleIngest menangani koneksi dari Streamer (Publisher)
 func (m *WebRTCManager) HandleIngest(streamID string, offer webrtc.SessionDescription, sendCandidate func(webrtc.ICECandidateInit)) (*webrtc.PeerConnection, *webrtc.SessionDescription, error) {
 	pc, err := m.webrtcAPI.NewPeerConnection(getRTCConfig())
 	if err != nil {
@@ -70,48 +71,53 @@ func (m *WebRTCManager) HandleIngest(streamID string, offer webrtc.SessionDescri
 	})
 
 	pc.OnTrack(func(remoteTrack *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		log.Printf("[Ingest] Track baru diterima: ID=%s, Codec=%s", remoteTrack.ID(), remoteTrack.Codec().MimeType)
+		log.Printf("[Ingest] Track baru diterima untuk stream '%s': Kind=%s, Codec=%s",
+			streamID, remoteTrack.Kind().String(), remoteTrack.Codec().MimeType)
 
+		// Buat Local Track untuk di-broadcast ke subscribers
 		localTrack, err := webrtc.NewTrackLocalStaticRTP(
 			remoteTrack.Codec().RTPCodecCapability,
-			fmt.Sprintf("video_%s", streamID),
-			"webrtc-sfu",
+			remoteTrack.ID(),
+			fmt.Sprintf("webrtc-sfu-%s", streamID),
 		)
 		if err != nil {
-			log.Printf("[Ingest] Gagal membuat local track: %v", err)
+			log.Printf("[Ingest] Gagal membuat local track (%s): %v", remoteTrack.Kind().String(), err)
 			return
 		}
 
 		m.mu.Lock()
-		m.streams[streamID] = localTrack
+		m.streams[streamID] = append(m.streams[streamID], localTrack)
 		m.streamerPC[streamID] = pc
-		m.streamerSSRC[streamID] = remoteTrack.SSRC()
+		if remoteTrack.Kind() == webrtc.RTPCodecTypeVideo {
+			m.streamerSSRC[streamID] = remoteTrack.SSRC()
+		}
 		m.mu.Unlock()
 
-		// Forward RTP packets
+		// Forward RTP Packets dari Streamer ke Local Track
 		go func() {
 			buf := make([]byte, 1500)
 			for {
 				i, _, readErr := remoteTrack.Read(buf)
 				if readErr != nil {
 					if readErr != io.EOF {
-						log.Printf("[Ingest] Error membaca RTP: %v", readErr)
+						log.Printf("[Ingest] Error membaca RTP (%s): %v", remoteTrack.Kind().String(), readErr)
 					}
 					break
 				}
 
 				if _, writeErr := localTrack.Write(buf[:i]); writeErr != nil {
-					log.Printf("[Ingest] Error meneruskan RTP: %v", writeErr)
+					log.Printf("[Ingest] Error meneruskan RTP (%s): %v", remoteTrack.Kind().String(), writeErr)
 					break
 				}
 			}
 
-			// Clean up saat streamer disconnect
+			// Cleanup saat streamer disconnect
 			m.mu.Lock()
 			delete(m.streams, streamID)
 			delete(m.streamerPC, streamID)
 			delete(m.streamerSSRC, streamID)
 			m.mu.Unlock()
+			log.Printf("[Ingest] Stream '%s' dibersihkan.", streamID)
 		}()
 	})
 
@@ -134,32 +140,28 @@ func (m *WebRTCManager) HandleIngest(streamID string, offer webrtc.SessionDescri
 	return pc, &answer, nil
 }
 
-// Inside HandleSubscribe function:
+// HandleSubscribe menangani koneksi dari Penonton (Subscriber)
 func (m *WebRTCManager) HandleSubscribe(streamID string, offer webrtc.SessionDescription, sendCandidate func(webrtc.ICECandidateInit)) (*webrtc.PeerConnection, *webrtc.SessionDescription, error) {
-	var localTrack *webrtc.TrackLocalStaticRTP
+	var tracks []*webrtc.TrackLocalStaticRTP
 	var streamerPC *webrtc.PeerConnection
 	var streamerSSRC webrtc.SSRC
 	var exists bool
 
-	// Coba mengecek ketersediaan stream dengan retry singkat (maksimal 3 detik)
+	// Retry loop (maksimal 3 detik) untuk mengantisipasi race-condition saat subscriber join
 	for i := 0; i < 6; i++ {
 		m.mu.RLock()
-		localTrack, exists = m.streams[streamID]
+		tracks, exists = m.streams[streamID]
 		streamerPC = m.streamerPC[streamID]
 		streamerSSRC = m.streamerSSRC[streamID]
 		m.mu.RUnlock()
 
-		if exists && localTrack != nil {
+		if exists && len(tracks) > 0 {
 			break
 		}
-		time.Sleep(500 * time.Millisecond) // Tunggu 500ms sebelum cek ulang
+		time.Sleep(500 * time.Millisecond)
 	}
 
-	if !exists || localTrack == nil {
-		return nil, nil, fmt.Errorf("stream '%s' tidak ditemukan atau belum live", streamID)
-	}
-
-	if !exists || localTrack == nil {
+	if !exists || len(tracks) == 0 {
 		return nil, nil, fmt.Errorf("stream '%s' tidak ditemukan atau belum live", streamID)
 	}
 
@@ -174,21 +176,24 @@ func (m *WebRTCManager) HandleSubscribe(streamID string, offer webrtc.SessionDes
 		}
 	})
 
-	rtpSender, err := pc.AddTrack(localTrack)
-	if err != nil {
-		pc.Close()
-		return nil, nil, err
-	}
-
-	// Baca RTCP dari Subscriber
-	go func() {
-		buf := make([]byte, 1500)
-		for {
-			if _, _, err := rtpSender.Read(buf); err != nil {
-				return
-			}
+	// Inject seluruh tracks (Video + Audio) ke PeerConnection Subscriber
+	for _, track := range tracks {
+		rtpSender, err := pc.AddTrack(track)
+		if err != nil {
+			log.Printf("[Subscribe] Gagal menambahkan track ke subscriber: %v", err)
+			continue
 		}
-	}()
+
+		// Membaca RTCP feedback dari Subscriber
+		go func(sender *webrtc.RTPSender) {
+			buf := make([]byte, 1500)
+			for {
+				if _, _, err := sender.Read(buf); err != nil {
+					return
+				}
+			}
+		}(rtpSender)
+	}
 
 	if err := pc.SetRemoteDescription(offer); err != nil {
 		pc.Close()
@@ -206,8 +211,8 @@ func (m *WebRTCManager) HandleSubscribe(streamID string, offer webrtc.SessionDes
 		return nil, nil, err
 	}
 
-	// Kirim paket PLI ke Streamer (Ingest) untuk meminta I-Frame/Keyframe baru
-	if streamerPC != nil {
+	// Request Keyframe (PLI) ke Streamer agar video penonton langsung muncul
+	if streamerPC != nil && streamerSSRC != 0 {
 		go func() {
 			_ = streamerPC.WriteRTCP([]rtcp.Packet{
 				&rtcp.PictureLossIndication{MediaSSRC: uint32(streamerSSRC)},

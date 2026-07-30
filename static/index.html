@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pion WebRTC Live Stream</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        margin: 20px;
+        background: #f4f4f9;
+      }
+      .container {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+      }
+      .card {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        flex: 1;
+        min-width: 300px;
+      }
+      video {
+        width: 100%;
+        height: 240px;
+        background: #000;
+        border-radius: 4px;
+        margin-top: 10px;
+      }
+      button {
+        padding: 10px 15px;
+        margin-top: 10px;
+        cursor: pointer;
+        border: none;
+        background: #007bff;
+        color: white;
+        border-radius: 4px;
+      }
+      button:disabled {
+        background: #ccc;
+      }
+      input {
+        padding: 8px;
+        width: 60%;
+      }
+    </style>
+    <script type="module" crossorigin src="/assets/index-DxYlga-P.js"></script>
+  </head>
+  <body>
+    <h2>🎥 WebRTC SFU Live Streaming (Go + Pion)</h2>
+
+    <div class="container">
+      <!-- Streamer Panel -->
+      <div class="card">
+        <h3>Streamer (Publish)</h3>
+        <input
+          type="text"
+          id="streamIdInput"
+          value="room-1"
+          placeholder="Stream ID"
+        />
+        <br />
+        <button id="startPublishBtn">Start Live</button>
+        <video id="localVideo" autoplay playsinline muted></video>
+      </div>
+
+      <!-- Viewer Panel -->
+      <div class="card">
+        <h3>Penonton (Subscribe)</h3>
+        <input
+          type="text"
+          id="subscribeIdInput"
+          value="room-1"
+          placeholder="Stream ID"
+        />
+        <br />
+        <button id="startSubscribeBtn">Watch Live</button>
+        <video id="remoteVideo" autoplay playsinline controls></video>
+      </div>
+    </div>
+
+  </body>
+</html>

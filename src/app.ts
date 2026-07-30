@@ -18,7 +18,6 @@ const rtcConfig: RTCConfiguration = {
   ],
 };
 
-// Fungsi pembantu untuk log di console
 function logMsg(prefix: string, message: string, data?: any): void {
   if (data !== undefined) {
     console.log(`[${prefix}] ${message}`, data);
@@ -27,11 +26,9 @@ function logMsg(prefix: string, message: string, data?: any): void {
   }
 }
 
-// Inisialisasi setelah DOM selesai dimuat
 document.addEventListener("DOMContentLoaded", () => {
-  logMsg("System", "App initialized. Connecting target WS: " + wsUrl);
+  logMsg("System", "App initialized. Target WS: " + wsUrl);
 
-  // Ambil elemen DOM
   const startPublishBtn = document.getElementById(
     "startPublishBtn",
   ) as HTMLButtonElement | null;
@@ -52,7 +49,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "subscribeIdInput",
   ) as HTMLInputElement | null;
 
-  // Verifikasi ketersediaan elemen
+  // Verifikasi ketersediaan elemen DOM
   if (!startPublishBtn)
     console.error("Elemen 'startPublishBtn' tidak ditemukan!");
   if (!localVideo) console.error("Elemen 'localVideo' tidak ditemukan!");
@@ -74,23 +71,24 @@ document.addEventListener("DOMContentLoaded", () => {
       logMsg("Publisher", "Tombol Start Live diklik.");
 
       const streamId: string = publishIdInput.value.trim();
-      if (!streamId) {
-        alert("Masukkan Stream ID terlebih dahulu!");
-        return;
-      }
+      if (!streamId) return alert("Masukkan Stream ID terlebih dahulu!");
 
       startPublishBtn.disabled = true;
 
       try {
         logMsg("Publisher", "Meminta izin kamera & mikrofon...");
         const stream: MediaStream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true,
+          video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
         });
 
-        logMsg("Publisher", "Akses kamera & mikrofon diizinkan.");
+        logMsg("Publisher", "Akses media diizinkan.");
         localVideo.srcObject = stream;
-        localVideo.muted = true; // Avoid feedback loop
+        localVideo.muted = true; // Mute streamer agar tidak menggemakan suara sendiri
         await localVideo
           .play()
           .catch((err) => logMsg("Publisher", "Video play warning:", err));
@@ -98,12 +96,10 @@ document.addEventListener("DOMContentLoaded", () => {
         const ws: WebSocket = new WebSocket(wsUrl);
         const pc: RTCPeerConnection = new RTCPeerConnection(rtcConfig);
 
-        // Bind media track ke PeerConnection
         stream.getTracks().forEach((track: MediaStreamTrack) => {
           pc.addTrack(track, stream);
         });
 
-        // Event ICE Candidate lokal
         pc.onicecandidate = (event: RTCPeerConnectionIceEvent): void => {
           if (event.candidate && ws.readyState === WebSocket.OPEN) {
             ws.send(
@@ -156,19 +152,7 @@ document.addEventListener("DOMContentLoaded", () => {
       } catch (err: any) {
         console.error("[Publisher] Error:", err);
         startPublishBtn.disabled = false;
-
-        if (
-          err.name === "NotAllowedError" ||
-          err.name === "PermissionDeniedError"
-        ) {
-          alert(
-            "Akses kamera/mikrofon ditolak. Mohon izinkan media di browser Anda.",
-          );
-        } else if (err.name === "NotFoundError") {
-          alert("Kamera atau mikrofon tidak ditemukan.");
-        } else {
-          alert("Gagal mengambil media stream: " + err.message);
-        }
+        alert("Gagal mengambil media stream: " + err.message);
       }
     });
   }
@@ -182,34 +166,37 @@ document.addEventListener("DOMContentLoaded", () => {
       logMsg("Subscriber", "Tombol Watch Live diklik.");
 
       const streamId: string = subscribeIdInput.value.trim();
-      if (!streamId) {
-        alert("Masukkan Stream ID terlebih dahulu!");
-        return;
-      }
+      if (!streamId) return alert("Masukkan Stream ID terlebih dahulu!");
 
       startSubscribeBtn.disabled = true;
+
+      // Matikan audio penonton secara default untuk mencegah feedback/echo
+      remoteVideo.muted = true;
 
       try {
         const ws: WebSocket = new WebSocket(wsUrl);
         const pc: RTCPeerConnection = new RTCPeerConnection(rtcConfig);
 
-        // Siapkan transceiver receive-only
         pc.addTransceiver("video", { direction: "recvonly" });
         pc.addTransceiver("audio", { direction: "recvonly" });
 
-        const remoteStream = new MediaStream();
-        remoteVideo.srcObject = remoteStream;
-
         pc.ontrack = (event: RTCTrackEvent): void => {
-          logMsg("Subscriber", "Track diterima:", event.track.kind);
-          remoteStream.addTrack(event.track);
+          logMsg("Subscriber", `Track diterima: ${event.track.kind}`);
+
+          if (event.streams && event.streams[0]) {
+            remoteVideo.srcObject = event.streams[0];
+          } else {
+            if (!remoteVideo.srcObject) {
+              remoteVideo.srcObject = new MediaStream();
+            }
+            (remoteVideo.srcObject as MediaStream).addTrack(event.track);
+          }
+
+          // Tetap muted saat di-play agar autoplay tidak diblokir browser & bebas echo
+          remoteVideo.muted = true;
 
           remoteVideo.play().catch((err: Error) => {
-            logMsg(
-              "Subscriber",
-              "Autoplay warning (perlu interaksi user):",
-              err,
-            );
+            logMsg("Subscriber", "Autoplay warning:", err);
           });
         };
 
@@ -246,7 +233,7 @@ document.addEventListener("DOMContentLoaded", () => {
           const msg: WSMessage = JSON.parse(event.data);
 
           if (msg.type === "answer" && msg.sdp) {
-            logMsg("Subscriber", "SDP Answer diterima dari server.");
+            logMsg("Subscriber", "SDP Answer diterima.");
             await pc.setRemoteDescription(
               new RTCSessionDescription({ type: "answer", sdp: msg.sdp }),
             );

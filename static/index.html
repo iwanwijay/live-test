@@ -3,84 +3,56 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Pion WebRTC Live Stream</title>
-    <style>
-      body {
-        font-family: sans-serif;
-        margin: 20px;
-        background: #f4f4f9;
-      }
-      .container {
-        display: flex;
-        gap: 20px;
-        flex-wrap: wrap;
-      }
-      .card {
-        background: white;
-        padding: 20px;
-        border-radius: 8px;
-        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        flex: 1;
-        min-width: 300px;
-      }
-      video {
-        width: 100%;
-        height: 240px;
-        background: #000;
-        border-radius: 4px;
-        margin-top: 10px;
-      }
-      button {
-        padding: 10px 15px;
-        margin-top: 10px;
-        cursor: pointer;
-        border: none;
-        background: #007bff;
-        color: white;
-        border-radius: 4px;
-      }
-      button:disabled {
-        background: #ccc;
-      }
-      input {
-        padding: 8px;
-        width: 60%;
-      }
-    </style>
-    <script type="module" crossorigin src="/assets/index-CHa85bxa.js"></script>
+    <title>WebRTC SFU Live Streaming</title>
+    <script type="module" crossorigin src="/assets/index-jmetr1Vq.js"></script>
   </head>
   <body>
-    <h2>🎥 WebRTC SFU Live Streaming (Go + Pion)</h2>
-
-    <div class="container">
-      <!-- Streamer Panel -->
-      <div class="card">
-        <h3>Streamer (Publish)</h3>
+    <div style="display: flex; gap: 20px; padding: 20px">
+      <!-- SISI STREAMER / PUBLISHER -->
+      <div style="flex: 1">
+        <h2>Streamer (Publish)</h2>
         <input
           type="text"
-          id="streamIdInput"
+          id="publishIdInput"
           value="room-1"
           placeholder="Stream ID"
         />
-        <br />
+        <!-- ID harus startPublishBtn -->
         <button id="startPublishBtn">Start Live</button>
-        <video id="localVideo" autoplay playsinline muted></video>
+        <br /><br />
+        <!-- Pastikan video menggunakan id localVideo, autoplay, muted, playsinline -->
+        <video
+          id="localVideo"
+          autoplay
+          muted
+          playsinline
+          style="width: 100%; background: #000"
+        ></video>
       </div>
 
-      <!-- Viewer Panel -->
-      <div class="card">
-        <h3>Penonton (Subscribe)</h3>
+      <!-- SISI PENONTON / SUBSCRIBER -->
+      <div style="flex: 1">
+        <h2>Penonton (Subscribe)</h2>
         <input
           type="text"
           id="subscribeIdInput"
           value="room-1"
           placeholder="Stream ID"
         />
-        <br />
+        <!-- ID harus startSubscribeBtn -->
         <button id="startSubscribeBtn">Watch Live</button>
-        <video id="remoteVideo" autoplay playsinline controls></video>
+        <br /><br />
+        <!-- Pastikan video menggunakan id remoteVideo, autoplay, playsinline, controls -->
+        <video
+          id="remoteVideo"
+          autoplay
+          playsinline
+          controls
+          style="width: 100%; background: #000"
+        ></video>
       </div>
     </div>
 
+    <!-- BIND SCRIPT TYPESCRIPT / VITE -->
   </body>
 </html>
